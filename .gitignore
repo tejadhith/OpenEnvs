@@ -5,3 +5,5 @@ envs/ui/
 __pycache__/
 *.py[cod]
 .DS_Store
+
+envs/shader/data/

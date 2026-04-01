@@ -6,11 +6,81 @@
 
 Supported interaction modes:
 
-- Prompt-conditioned or reference-conditioned shader creation
+- Reference-conditioned shader recreation via SSIM reward
 - Multi-turn shader refinement (not one-shot only)
 - GLSL-first execution via headless rendering, with WGSL/browser-native as a later target
 - Pluggable reward traces for RL, evaluation, reranking, and distillation
 - Hidden evaluation across time, resolution, and seed variations
+
+## Project Structure
+
+```
+envs/shader/
+├── __init__.py          # Public API: ShaderEnv, ShaderAction, ShaderObservation
+├── models.py            # Pydantic Action / Observation types
+├── client.py            # OpenEnv client (ShaderEnv)
+├── tasks.py             # Task bank loader (shaders21k corpus)
+├── reward.py            # SSIM reward computation
+├── render.py            # Headless GLSL renderer (ModernGL + EGL)
+├── harness.py           # Subprocess-isolated render wrapper
+├── download.sh          # Fetches shaders21k dataset
+├── openenv.yaml         # OpenEnv space descriptor
+├── pyproject.toml
+└── server/
+    ├── app.py           # FastAPI application (OpenEnv HTTP server)
+    ├── environment.py   # Environment implementation (reset / step loop)
+    └── Dockerfile
+```
+
+## Quickstart
+
+```bash
+# Local development — download the shaders21k corpus (~41 MB)
+cd envs/shader
+./download.sh
+
+# Run the environment server
+uvicorn server.app:app --host 0.0.0.0 --port 8000
+
+# Or via the installed CLI entry point
+server --host 0.0.0.0 --port 8000
+```
+
+For Docker, the corpus is downloaded at build time automatically:
+
+```bash
+docker build -f server/Dockerfile -t shader-env .
+docker run -p 8000:8000 shader-env
+```
+
+### Client Usage
+
+```python
+from shader import ShaderEnv, ShaderAction
+
+with ShaderEnv(base_url="http://localhost:8000").sync() as client:
+    result = client.reset()
+    print(result.observation.task)         # ShaderToy ID
+    print(result.observation.reference_png) # base64 PNG
+
+    result = client.step(ShaderAction(code="void mainImage(out vec4 c, in vec2 f) { c = vec4(1,0,0,1); }"))
+    print(result.observation.compiled)     # True/False
+    print(result.observation.ssim)         # similarity vs reference
+```
+
+## Task Bank
+
+The task bank is loaded from the [shaders21k](https://github.com/mbaradad/shaders21k) corpus (NeurIPS 2022). At load time, shaders are filtered to single-pass fragments with no texture/buffer inputs, yielding ~16,800 usable tasks.
+
+Each task is a Shadertoy-dialect GLSL shader with known ground-truth code. The environment renders the ground truth to produce a reference image, then challenges the agent to reproduce it.
+
+| Field | Description |
+|-------|-------------|
+| `name` | ShaderToy ID (e.g. `MdGcDc`) |
+| `code` | GLSL fragment shader source |
+| `source` | ShaderToy URL for provenance |
+| `resolution` | Render resolution, default 512x288 |
+| `time` | iTime uniform value, default 0.0 |
 
 ## Motivation
 
@@ -35,23 +105,30 @@ The primary target is GLSL via headless OpenGL.
   - The entire relevant corpus is GLSL: Shadertoy (~1M shaders), shaders21k (21K shaders), ShaderEval (the only published GLSL benchmark)
   - GLSL has explicit representation in LLM pretraining corpora (The Stack includes a GLSL subset); WGSL has near-zero public training data
   - WGSL prohibits recursion, has no implicit type coercions, and uses incompatible uniform conventions, making Shadertoy-dialect GLSL non-transpilable to WGSL via naga at corpus scale (~15% failure rate)
-- **ModernGL** with EGL as the headless rendering backend
+- **ModernGL** with EGL as the headless rendering backend (`render.py`)
   - Runs on Linux servers without a display via EGL
   - Used by shaders21k for offline rendering
-  - Each shader runs in an isolated subprocess with a timeout to contain driver crashes and infinite loops
-- **`shaderc` / `glslang`** for offline validation and portability checks
+  - Wraps user shader code in a Shadertoy-compatible preamble (standard uniforms, `mainImage` forward declaration)
+  - Strips `#version`, `precision`, and `#extension` directives from user code to avoid conflicts
+  - Adjusts error line numbers reported by the driver to map back to user code
+- **Subprocess isolation** (`harness.py`)
+  - Each render runs in a separate process to contain driver crashes, infinite loops, and GPU state corruption
+  - Configurable per-render timeout (default 10s)
+  - Returns structured `RenderResult` with compile/render status, error messages, and raw RGBA pixel data
+- **`shaderc` / `glslang`** for offline validation and portability checks (planned)
 - **WGSL / WebGPU** deferred to a later phase for browser-native demos
 
 ## Episode Schema
 
 The environment follows a standard multi-turn refinement loop:
 
-1. Start from an empty, partial, or broken shader
-2. Provide a prompt, reference frame, reference clip, or target effect description
-3. The agent edits the shader over multiple turns
-4. Compile and render the shader after each turn
-5. Render hidden evaluation frames across multiple conditions
-6. Return structured reward traces after every turn
+1. `reset()` picks a task from the bank, renders the ground-truth reference, and returns it as a base64 PNG
+2. The agent submits GLSL code via `step(ShaderAction(code=...))`
+3. The server compiles and renders the shader, computes SSIM vs reference
+4. Returns compile/render status, errors, rendered image, and SSIM reward
+5. Episode ends when the turn budget is exhausted (default 10 turns) or SSIM >= 0.99
+
+The server supports up to 4 concurrent environment sessions (`max_concurrent_envs=4`).
 
 This supports RL training, best-of-N search and reranking, trajectory collection for SFT or distillation, and evaluation under a shared runtime.
 
@@ -92,6 +169,10 @@ Evaluation relies on hidden checks rather than visible examples only:
 
 ### Reward Structure
 
+**Current implementation** (`reward.py`): windowed SSIM (Wang et al. 2004) between agent render and reference, computed per-channel on RGB and averaged. Uses scipy `uniform_filter` for windowed statistics when available, falls back to global-stats SSIM. Reward is 0.0 when compilation or rendering fails (hard gate).
+
+**Planned multi-component reward:**
+
 ```text
 R = G_compile * G_render * (
   0.35 * appearance_match +
@@ -115,24 +196,22 @@ Component notes:
 
 ```python
 class ShaderAction(Action):
-    shader_code: str
-
+    code: str  # Shadertoy-dialect GLSL fragment shader source
 
 class ShaderObservation(Observation):
-    brief: str
-    shader_language: str
-    visible_renders: dict[str, bytes]
-    compiler_errors: list[str]
-    perf_summary: dict
-    robustness_summary: dict
-    reward_breakdown: dict[str, float]
-    diff_summary: str
+    task: str               # ShaderToy ID
+    remaining: int          # turns left in episode
+    reference_png: str      # base64 PNG (non-empty on reset only)
+    compiled: bool
+    rendered: bool
+    errors: list[str]
+    agent_png: str          # base64 PNG of agent's render
+    ssim: float             # SSIM vs reference in [0, 1]
     done: bool = False
     reward: float | None = None
 ```
 
 - `reward` and `done` inside `Observation` follows OpenEnv spec (RFC 002, Decision 2): rewards are computed inside the environment and returned as part of the observation; the server layer promotes them to the top-level `StepResponse`.
-- `reward_breakdown` aligns with OpenEnv's RFC 004 Rubric system for per-component reward logging.
 - Detailed artifacts (frame dumps, profiler traces, held-out evaluation results) live behind tools rather than being inlined on every turn.
 
 ## Training
@@ -153,7 +232,7 @@ Both have TRL and OpenEnv integrations.
 
 ### Task Bank
 
-The shaders21k corpus (21K OpenGL fragment shaders from Shadertoy) is the natural source for populating the initial task bank. RL training requires 10K-15K rollouts minimum based on adjacent work (CTRL-S: 14.4K, Reason-SVG: 10K).
+The task bank is populated from the shaders21k corpus (~16.8K single-pass shaders after filtering). RL training requires 10K-15K rollouts minimum based on adjacent work (CTRL-S: 14.4K, Reason-SVG: 10K).
 
 ## Related Work
 
@@ -171,13 +250,22 @@ The shaders21k corpus (21K OpenGL fragment shaders from Shadertoy) is the natura
 | **ShadAR** (arXiv:2602.17481) | LLM-driven real-time shader generation for AR. |
 | **Procedural Shader Evolution** (arXiv:2312.17587) | Interactive evolutionary algorithms for shader generation. Multi-turn refinement as iterative optimization. |
 
+## Licensing
+
+Shader code in the task bank is sourced from [ShaderToy](https://www.shadertoy.com/) via the [shaders21k](https://github.com/mbaradad/shaders21k) dataset. ShaderToy's default license is **CC BY-NC-SA 3.0** — authors may choose a different license, but there is no structured per-shader license metadata in the dataset or the ShaderToy API.
+
+- The dataset is not redistributed in this repository; it is downloaded at build time
+- Individual shader provenance is tracked via the `source` field on each task (links back to the ShaderToy page)
+- For commercial use, per-shader license review is required
+
 ## Next Steps
 
-- Define the exact `reset()` and `step()` episode schema per OpenEnv RFC 002
-- Build the first 20-50 task templates seeded from shaders21k
 - Plan the SFT warm-up dataset and training run (prerequisite for RL)
-- Implement the reward plugin API
-- Establish the hidden evaluation protocol for appearance (DINOv2 + SSIM), stability, and performance
+- Extend reward beyond SSIM: DINOv2 appearance match, temporal stability, performance, robustness
+- Implement the reward plugin API (multi-component, pluggable)
+- Establish the hidden evaluation protocol across time, resolution, and seed variations
+- Add `shaderc` / `glslang` offline validation
+- Add support for multi-pass shaders and texture inputs
 
 ## References
 

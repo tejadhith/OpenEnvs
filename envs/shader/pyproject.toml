@@ -3,18 +3,28 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "shader"
+name = "openenv-shader"
 version = "0.1.0"
-description = "Headless GLSL shader rendering harness"
+description = "Shader generation environment for OpenEnv"
 requires-python = ">=3.11"
 dependencies = [
     "moderngl>=5.10",
     "glcontext>=3.0",
     "numpy>=1.24",
     "Pillow>=10.0",
+    "openenv-core[core]>=0.2.1",
+    "scipy>=1.10",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
 ]
+
+[project.scripts]
+server = "shader.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["shader", "shader.server"]
+package-dir = { "shader" = ".", "shader.server" = "server" }
