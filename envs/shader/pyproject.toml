@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shader"
+version = "0.1.0"
+description = "Headless GLSL shader rendering harness"
+requires-python = ">=3.11"
+dependencies = [
+    "moderngl>=5.10",
+    "glcontext>=3.0",
+    "numpy>=1.24",
+    "Pillow>=10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]

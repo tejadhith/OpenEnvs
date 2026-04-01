@@ -1,5 +1,6 @@
 docs/
 exploration/
+envs/ui/
 
 __pycache__/
 *.py[cod]
