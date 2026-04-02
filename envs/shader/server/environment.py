@@ -99,7 +99,7 @@ class ShaderEnvironment(Environment):
             time=self._task.time,
         )
 
-        # Compute reward
+        # Compute reward — penalize compile/render failures
         if result.compiled and result.rendered and result.frame:
             score = ssim(
                 self._ref, result.frame,
@@ -108,8 +108,11 @@ class ShaderEnvironment(Environment):
             png = self._encode(
                 result.frame, result.width, result.height,
             )
+        elif not result.compiled:
+            score = -0.1
+            png = ""
         else:
-            score = 0.0
+            score = -0.05
             png = ""
 
         done = self._remaining <= 0 or score >= 0.99
