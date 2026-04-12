@@ -49,12 +49,14 @@ RUN apt-get update && \
 COPY --from=builder /app/env/.venv /app/.venv
 COPY --from=builder /app/env /app/env
 
-# Download shaders21k corpus
-RUN pip install --no-cache-dir gdown && \
-    gdown "1kIiBdeW9CEIfRlYOYTuxfWvN036k3Iig" -O /tmp/shaders.zip && \
-    python3 -c "import zipfile; zipfile.ZipFile('/tmp/shaders.zip').extractall('/app/env')" && \
-    mv /app/env/shader_codes /app/env/data && \
-    rm /tmp/shaders.zip
+# Download shaders21k corpus (skip if data/ already present from COPY)
+RUN if [ ! -d /app/env/data/shadertoy ]; then \
+        pip install --no-cache-dir gdown && \
+        gdown "1kIiBdeW9CEIfRlYOYTuxfWvN036k3Iig" -O /tmp/shaders.zip && \
+        python3 -c "import zipfile; zipfile.ZipFile('/tmp/shaders.zip').extractall('/app/env')" && \
+        mv /app/env/shader_codes /app/env/data && \
+        rm /tmp/shaders.zip; \
+    fi
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
