@@ -150,7 +150,7 @@ def call_model(client: OpenAI, conversation: list) -> str:
             messages=[{"role": "system", "content": SYSTEM_PROMPT}]
             + conversation,
             temperature=TEMPERATURE,
-            max_tokens=MAX_TOKENS,
+            max_completion_tokens=MAX_TOKENS,
             stream=False,
         )
         text = (completion.choices[0].message.content or "").strip()
