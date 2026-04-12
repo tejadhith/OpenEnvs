@@ -170,15 +170,20 @@ Each task uses the same grader: SSIM between the agent's rendered output and the
 
 ### Baseline Scores
 
-Baseline scores using `Qwen/Qwen2.5-72B-Instruct` (5 steps per task):
+Evaluated with GPT 5.4 via `inference.py` (5 steps per task, temperature 0.2):
 
-| Task | Expected Score | Notes |
-|------|---------------|-------|
-| `Nd33R4` | 0.70 - 0.90 | Bitwise XOR pattern — conceptually simple but exact reproduction requires precise integer math |
-| `stlXWH` | 0.40 - 0.70 | SDF shape with distance-based coloring — requires correct distance function and color mapping |
-| `ftjSRd` | 0.10 - 0.40 | Full raymarcher — 122 lines of tightly coupled SDF, rotation, and coloring logic |
+| Task | Difficulty | Best SSIM | Step-by-step rewards | Multi-turn improvement |
+|------|-----------|-----------|---------------------|----------------------|
+| `Nd33R4` | Easy | **0.27** | 0.27, 0.13, 0.15, 0.15, 0.16 | No — model generates hash noise instead of XOR pattern |
+| `stlXWH` | Medium | **0.94** | 0.85, 0.88, 0.91, 0.90, 0.94 | Yes — steady refinement from 0.85 to 0.94 |
+| `ftjSRd` | Hard | **0.40** | 0.31, 0.15, 0.33, 0.40, 0.28 | Partial — oscillates between 0.15-0.40 |
 
-*Scores depend on model capability and are approximate. Run `inference.py` to reproduce.*
+Key observations:
+- `Nd33R4` (easy by code complexity) is hard for VLMs because bitwise XOR patterns are difficult to reverse-engineer from a rendered image alone. The model defaults to procedural noise rather than integer math.
+- `stlXWH` (medium) shows clear multi-turn refinement — the model progressively improves the SDF shape and color mapping across steps.
+- `ftjSRd` (hard) challenges frontier models with 122 lines of tightly coupled raymarching, rotation, and HSV coloring. The model attempts structural elements but cannot match the exact parameters.
+
+*Run `inference.py` to reproduce. Scores vary by model and API endpoint.*
 
 ## Task Bank (Corpus)
 
