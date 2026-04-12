@@ -49,11 +49,6 @@ RUN apt-get update && \
 COPY --from=builder /app/env/.venv /app/.venv
 COPY --from=builder /app/env /app/env
 
-# Extract shaders21k corpus if bundled; otherwise curated tasks suffice
-RUN if [ -f /app/env/shader_data.zip ]; then \
-        python3 -c "import zipfile; zipfile.ZipFile('/app/env/shader_data.zip').extractall('/app/env')" && \
-        rm /app/env/shader_data.zip; \
-    fi
 
 ENV PATH="/app/.venv/bin:$PATH"
 ENV PYTHONPATH="/app/env:$PYTHONPATH"
