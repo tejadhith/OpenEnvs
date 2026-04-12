@@ -40,7 +40,11 @@ class ShaderEnvironment(Environment):
         self._budget = budget
         self._rng = random.Random(seed)
         if ShaderEnvironment._tasks is None:
-            ShaderEnvironment._tasks = load_tasks()
+            try:
+                ShaderEnvironment._tasks = load_tasks()
+            except FileNotFoundError:
+                # Corpus not available — use curated tasks only
+                ShaderEnvironment._tasks = list(CURATED)
         self._state = State(episode_id=None, step_count=0)
 
         # Episode state
