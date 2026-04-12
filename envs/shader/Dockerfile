@@ -49,8 +49,11 @@ RUN apt-get update && \
 COPY --from=builder /app/env/.venv /app/.venv
 COPY --from=builder /app/env /app/env
 
-# Download shaders21k corpus (skip if data/ already present from COPY)
-RUN if [ ! -d /app/env/data/shadertoy ]; then \
+# Extract shaders21k corpus from bundled zip (no external download needed)
+RUN if [ -f /app/env/shader_data.zip ]; then \
+        python3 -c "import zipfile; zipfile.ZipFile('/app/env/shader_data.zip').extractall('/app/env')" && \
+        rm /app/env/shader_data.zip; \
+    elif [ ! -d /app/env/data/shadertoy ]; then \
         pip install --no-cache-dir gdown && \
         gdown "1kIiBdeW9CEIfRlYOYTuxfWvN036k3Iig" -O /tmp/shaders.zip && \
         python3 -c "import zipfile; zipfile.ZipFile('/tmp/shaders.zip').extractall('/app/env')" && \

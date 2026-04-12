@@ -1,3 +1,4 @@
+data/
 benchmark_output/
 test_output/
 sampleinference.py
