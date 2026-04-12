@@ -49,16 +49,15 @@ RUN apt-get update && \
 COPY --from=builder /app/env/.venv /app/.venv
 COPY --from=builder /app/env /app/env
 
-# Extract shaders21k corpus from bundled zip (no external download needed)
+# Extract shaders21k corpus
+# Priority: bundled zip > already extracted > download from HF Space
 RUN if [ -f /app/env/shader_data.zip ]; then \
         python3 -c "import zipfile; zipfile.ZipFile('/app/env/shader_data.zip').extractall('/app/env')" && \
         rm /app/env/shader_data.zip; \
     elif [ ! -d /app/env/data/shadertoy ]; then \
-        pip install --no-cache-dir gdown && \
-        gdown "1kIiBdeW9CEIfRlYOYTuxfWvN036k3Iig" -O /tmp/shaders.zip && \
-        python3 -c "import zipfile; zipfile.ZipFile('/tmp/shaders.zip').extractall('/app/env')" && \
-        mv /app/env/shader_codes /app/env/data && \
-        rm /tmp/shaders.zip; \
+        curl -fSL "https://huggingface.co/spaces/tejadhith/shader/resolve/main/shader_data.zip" -o /tmp/shader_data.zip && \
+        python3 -c "import zipfile; zipfile.ZipFile('/tmp/shader_data.zip').extractall('/app/env')" && \
+        rm /tmp/shader_data.zip; \
     fi
 
 ENV PATH="/app/.venv/bin:$PATH"
