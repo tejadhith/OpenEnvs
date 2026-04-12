@@ -7,3 +7,7 @@ __pycache__/
 .DS_Store
 
 envs/shader/data/
+envs/shader/benchmark_output/
+envs/shader/sampleinference.py
+envs/shader/validation.sh
+.codex

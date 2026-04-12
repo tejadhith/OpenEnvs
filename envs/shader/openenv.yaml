@@ -4,3 +4,28 @@ type: space
 runtime: fastapi
 app: server.app:app
 port: 8000
+
+description: >
+  Reference-image-conditioned GLSL shader generation with SSIM reward.
+  Agents write Shadertoy-dialect fragment shaders to reproduce a target
+  image across easy, medium, and hard difficulty levels.
+
+author: tejadhith
+version: 0.1.0
+
+tasks:
+  - name: Nd33R4
+    difficulty: easy
+    description: XOR color pattern — bitwise operations on pixel coordinates (13 lines).
+  - name: stlXWH
+    difficulty: medium
+    description: SDF distance field visualization with smooth coloring (44 lines).
+  - name: ftjSRd
+    difficulty: hard
+    description: Raymarcher with SDF repetition, polar coords, HSV coloring (122 lines).
+
+tags:
+  - openenv
+  - shader
+  - glsl
+  - vision

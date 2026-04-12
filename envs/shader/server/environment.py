@@ -15,12 +15,12 @@ from PIL import Image
 
 try:
     from ..models import ShaderAction, ShaderObservation
-    from ..tasks import Task, load as load_tasks
+    from ..tasks import Task, load as load_tasks, CURATED, CURATED_BY_NAME
     from ..reward import ssim
     from ..harness import render as harness_render
 except ImportError:
     from models import ShaderAction, ShaderObservation
-    from tasks import Task, load as load_tasks
+    from tasks import Task, load as load_tasks, CURATED, CURATED_BY_NAME
     from reward import ssim
     from harness import render as harness_render
 
@@ -48,8 +48,17 @@ class ShaderEnvironment(Environment):
         self._ref: bytes | None = None
         self._remaining: int = 0
 
-    def reset(self, seed: int | None = None, episode_id: str | None = None) -> ShaderObservation:
-        """Start a new episode. Picks a task, renders the reference, returns initial observation."""
+    def reset(self, seed: int | None = None, episode_id: str | None = None,
+              task: str | None = None, **kwargs) -> ShaderObservation:
+        """Start a new episode.
+
+        Args:
+            seed: RNG seed for reproducible task selection.
+            episode_id: Optional episode identifier.
+            task: If given, select a curated task by name (e.g. "gradient",
+                  "rings", "mandelbrot"). Otherwise picks randomly from the
+                  full corpus.
+        """
         if seed is not None:
             self._rng = random.Random(seed)
 
@@ -59,22 +68,25 @@ class ShaderEnvironment(Environment):
         )
         self._remaining = self._budget
 
-        # Pick a random task order without copying the full list
-        indices = list(range(len(self._tasks)))
-        self._rng.shuffle(indices)
+        # Select task(s) to try
+        if task and task in CURATED_BY_NAME:
+            candidates = [CURATED_BY_NAME[task]]
+        else:
+            indices = list(range(len(self._tasks)))
+            self._rng.shuffle(indices)
+            candidates = [self._tasks[i] for i in indices]
 
-        for i in indices:
-            task = self._tasks[i]
+        for t in candidates:
             result = harness_render(
-                task.code,
-                resolution=task.resolution,
-                time=task.time,
+                t.code,
+                resolution=t.resolution,
+                time=t.time,
             )
             if result.compiled and result.rendered and result.frame:
-                self._task = task
+                self._task = t
                 self._ref = result.frame
                 return ShaderObservation(
-                    task=task.name,
+                    task=t.name,
                     remaining=self._remaining,
                     reference_png=self._encode(
                         result.frame, result.width, result.height,
@@ -99,7 +111,7 @@ class ShaderEnvironment(Environment):
             time=self._task.time,
         )
 
-        # Compute reward — penalize compile/render failures
+        # Compute reward in [0.0, 1.0]
         if result.compiled and result.rendered and result.frame:
             score = ssim(
                 self._ref, result.frame,
@@ -108,11 +120,8 @@ class ShaderEnvironment(Environment):
             png = self._encode(
                 result.frame, result.width, result.height,
             )
-        elif not result.compiled:
-            score = -0.1
-            png = ""
         else:
-            score = -0.05
+            score = 0.0
             png = ""
 
         done = self._remaining <= 0 or score >= 0.99

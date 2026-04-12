@@ -1,3 +1,16 @@
+---
+title: Shader Environment Server
+emoji: 🎨
+colorFrom: purple
+colorTo: blue
+sdk: docker
+pinned: false
+app_port: 8000
+base_path: /web
+tags:
+  - openenv
+---
+
 # Shader Environment
 
 ## Overview
@@ -35,25 +48,69 @@ envs/shader/
 ## Quickstart
 
 ```bash
-# Local development — download the shaders21k corpus (~41 MB)
+# Download the shaders21k corpus (~41 MB)
 cd envs/shader
 ./download.sh
-
-# Run the environment server
-uvicorn server.app:app --host 0.0.0.0 --port 8000
-
-# Or via the installed CLI entry point
-server --host 0.0.0.0 --port 8000
 ```
 
-For Docker, the corpus is downloaded at build time automatically:
+### Running via uv / uvicorn
 
 ```bash
-docker build -f server/Dockerfile -t shader-env .
-docker run -p 8000:8000 shader-env
+cd envs/shader
+PYTHONPATH=../.. uvicorn server.app:app --host 0.0.0.0 --port 8000
 ```
 
-### Client Usage
+### Running via Docker
+
+The corpus is downloaded at build time automatically:
+
+```bash
+cd envs/shader
+docker build -f server/Dockerfile -t shader .
+docker run -p 8000:8000 shader
+```
+
+### Validation
+
+```bash
+# Validate local structure
+cd envs/shader
+openenv validate --verbose
+
+# Validate a running server (6 criteria: openapi, health, metadata, schema, mcp, mode)
+openenv validate http://localhost:8000
+```
+
+### Interacting via WebSocket
+
+The HTTP endpoints (`/reset`, `/step`) are stateless — each creates a fresh environment instance. For multi-turn sessions with persistent state, use the WebSocket endpoint:
+
+```python
+import asyncio, json, websockets
+
+async def main():
+    async with websockets.connect("ws://localhost:8000/ws") as ws:
+        # Reset — picks a task, renders reference
+        await ws.send(json.dumps({"type": "reset", "data": {}}))
+        resp = json.loads(await ws.recv())
+        obs = resp["data"]["observation"]
+        print(obs["task"], obs["remaining"])
+
+        # Step — submit GLSL, get back SSIM + render
+        await ws.send(json.dumps({
+            "type": "step",
+            "data": {"code": "void mainImage(out vec4 c, in vec2 f) { c = vec4(1,0,0,1); }"}
+        }))
+        resp = json.loads(await ws.recv())
+        r = resp["data"]
+        print(f"compiled={r['observation']['compiled']} ssim={r['observation']['ssim']} reward={r['reward']}")
+
+        await ws.send(json.dumps({"type": "close"}))
+
+asyncio.run(main())
+```
+
+### Python Client
 
 ```python
 from shader import ShaderEnv, ShaderAction
@@ -68,9 +125,64 @@ with ShaderEnv(base_url="http://localhost:8000").sync() as client:
     print(result.observation.ssim)         # similarity vs reference
 ```
 
-## Task Bank
+### Benchmark
 
-The task bank is loaded from the [shaders21k](https://github.com/mbaradad/shaders21k) corpus (NeurIPS 2022). At load time, shaders are filtered to single-pass fragments with no texture/buffer inputs, yielding ~16,800 usable tasks.
+Runs GPT 5.4 against the environment over WebSocket, producing a reproducible baseline:
+
+```bash
+# Requires a running server and OPENAI_API_KEY set
+python envs/shader/benchmark.py                                    # 3 episodes, default seeds
+python envs/shader/benchmark.py --turns 5                          # cap turns per episode
+python envs/shader/benchmark.py --url ws://localhost:8001/ws       # custom server
+python envs/shader/benchmark.py --seeds 10 20 30                   # custom seeds
+```
+
+Seeds control reproducible task selection. Results are saved to `benchmark_output/results.json`.
+
+## Tasks
+
+The environment ships with 3 curated tasks at increasing difficulty. Each task presents a reference image; the agent must write GLSL code to reproduce it. The grader is SSIM (structural similarity), returning a score in [0.0, 1.0].
+
+| Task | Difficulty | Lines | Description | What the agent needs |
+|------|-----------|-------|-------------|---------------------|
+| `Nd33R4` | Easy | 13 | XOR color pattern on pixel coordinates | `int()` casting, bitwise XOR/AND, float conversion |
+| `stlXWH` | Medium | 44 | SDF distance field (square minus circle) with smooth coloring | Signed distance functions, `abs`, `exp`, `smoothstep`, `cos` for distance coloring |
+| `ftjSRd` | Hard | 122 | Raymarcher with SDF repetition, polar coordinates, HSV coloring | Ray marching loop, rotation matrices, domain repetition, HSV-to-RGB, polar coords |
+
+All 3 tasks are sourced from the [shaders21k](https://github.com/mbaradad/shaders21k) corpus (Shadertoy). They were selected by code complexity (line count, number of concepts) and verified to produce visually interesting output at render time.
+
+To select a specific task, pass its name to `reset()`:
+
+```python
+result = env.reset(task="Nd33R4")   # easy — XOR pattern
+result = env.reset(task="stlXWH")   # medium — SDF visualization
+result = env.reset(task="ftjSRd")   # hard — raymarcher
+result = env.reset()                # random from full corpus
+```
+
+### Grading
+
+Each task uses the same grader: SSIM between the agent's rendered output and the ground-truth reference image. The score is deterministic and reproducible for the same GLSL input.
+
+- **Score range**: 0.0 (no similarity) to 1.0 (pixel-perfect match)
+- **Success threshold**: score >= 0.90
+- **Compile/render failures**: score = 0.0
+
+### Baseline Scores
+
+Baseline scores using `Qwen/Qwen2.5-72B-Instruct` (5 steps per task):
+
+| Task | Expected Score | Notes |
+|------|---------------|-------|
+| `Nd33R4` | 0.70 - 0.90 | Bitwise XOR pattern — conceptually simple but exact reproduction requires precise integer math |
+| `stlXWH` | 0.40 - 0.70 | SDF shape with distance-based coloring — requires correct distance function and color mapping |
+| `ftjSRd` | 0.10 - 0.40 | Full raymarcher — 122 lines of tightly coupled SDF, rotation, and coloring logic |
+
+*Scores depend on model capability and are approximate. Run `inference.py` to reproduce.*
+
+## Task Bank (Corpus)
+
+Beyond the 3 curated tasks, the full task bank is loaded from the [shaders21k](https://github.com/mbaradad/shaders21k) corpus (NeurIPS 2022). At load time, shaders are filtered to single-pass fragments with no texture/buffer inputs, yielding ~16,800 usable tasks.
 
 Each task is a Shadertoy-dialect GLSL shader with known ground-truth code. The environment renders the ground truth to produce a reference image, then challenges the agent to reproduce it.
 
@@ -81,6 +193,7 @@ Each task is a Shadertoy-dialect GLSL shader with known ground-truth code. The e
 | `source` | ShaderToy URL for provenance |
 | `resolution` | Render resolution, default 512x288 |
 | `time` | iTime uniform value, default 0.0 |
+| `difficulty` | `easy`, `medium`, `hard` (curated tasks only) |
 
 ## Motivation
 
@@ -169,7 +282,7 @@ Evaluation relies on hidden checks rather than visible examples only:
 
 ### Reward Structure
 
-**Current implementation** (`reward.py`): windowed SSIM (Wang et al. 2004) between agent render and reference, computed per-channel on RGB and averaged. Uses scipy `uniform_filter` for windowed statistics when available, falls back to global-stats SSIM. Reward is 0.0 when compilation or rendering fails (hard gate).
+**Current implementation** (`reward.py`): windowed SSIM (Wang et al. 2004) between agent render and reference, computed per-channel on RGB and averaged. Uses scipy `uniform_filter` for windowed statistics when available, falls back to global-stats SSIM. Compile and render failures receive reward 0.0. Reward range: [0.0, 1.0].
 
 **Planned multi-component reward:**
 

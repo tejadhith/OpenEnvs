@@ -14,6 +14,7 @@ dependencies = [
     "Pillow>=10.0",
     "openenv-core[core]>=0.2.1",
     "scipy>=1.10",
+    "openai>=1.0",
 ]
 
 [project.optional-dependencies]
