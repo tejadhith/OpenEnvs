@@ -253,7 +253,7 @@ async def run_task(env, client: OpenAI, task_name: str) -> None:
             if done:
                 break
 
-        score = best_ssim
+        score = min(max(best_ssim, 0.01), 0.99)
         success = score >= SUCCESS_THRESHOLD
 
     finally:

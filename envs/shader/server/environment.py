@@ -115,7 +115,7 @@ class ShaderEnvironment(Environment):
             time=self._task.time,
         )
 
-        # Compute reward in [0.0, 1.0]
+        # Compute reward in (0, 1) exclusive — validator rejects 0.0 and 1.0
         if result.compiled and result.rendered and result.frame:
             score = ssim(
                 self._ref, result.frame,
@@ -127,6 +127,7 @@ class ShaderEnvironment(Environment):
         else:
             score = 0.0
             png = ""
+        score = min(max(score, 0.01), 0.99)
 
         done = self._remaining <= 0 or score >= 0.99
 
